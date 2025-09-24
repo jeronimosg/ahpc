@@ -178,8 +178,8 @@ public:
 /* system class */
 class System {
 public:
-  std::vector<Molecule> molecules; // all the molecules in the system
-  double time = 0;                 // current simulation time
+  Molecules molecules; // all the molecules in the system
+  double time = 0;     // current simulation time
 };
 
 class Sim_Configuration {
@@ -227,22 +227,27 @@ public:
 // go from being e.g. 20th closest to 2nd closest; only needs infrequent
 // updating
 void BuildNeighborList(System &sys) {
-  std::vector<double> distances2(
-      sys.molecules.size()); // array of distances to other molecules
-  std::vector<size_t> index(
-      sys.molecules.size()); // index array used for argsort
-  for (size_t i = 0; i < sys.molecules.size();
-       i++) { // For each molecule, build the neighbour list
-    sys.molecules[i].neighbours.clear(); // empty neighbour list of molecule i
-    for (size_t j = 0; j < sys.molecules.size(); j++) {
-      Vec3 dp = sys.molecules[i].atoms[0].p - sys.molecules[j].atoms[0].p;
-      distances2[j] = dp.mag2();
-      index[j] = j;
+  // array of distances to other molecules
+  std::vector<double> distances2(sys.molecules.no_mol);
+  // index array used for argsort
+  std::vector<size_t> index(sys.molecules.no_mol);
+
+  // For each molecule, build the neighbour list
+  for (size_t mol_a_idx = 0; mol_a_idx < sys.molecules.no_mol; mol_a_idx++) {
+    // empty neighbour list of molecule a
+    sys.molecules.neighbours[mol_a_idx].clear();
+
+    for (size_t mol_b_idx = 0; mol_b_idx < sys.molecules.no_mol; mol_b_idx++) {
+      Vec3 dp = sys.molecules.atoms[0].p[mol_a_idx] -
+                sys.molecules.atoms[0].p[mol_b_idx];
+      distances2[mol_b_idx] = dp.mag2();
+      index[mol_b_idx] = mol_b_idx;
     }
-    distances2[i] = 1e99; // exclude own molecule from neighbour list
+
+    distances2[mol_a_idx] = 1e99; // exclude own molecule from neighbour list
 
     // We want at most nClosest neighbors, but no more than number of molecules.
-    size_t target_num = std::min(nClosest, sys.molecules.size() - 1);
+    size_t target_num = std::min(nClosest, sys.molecules.no_mol - 1);
 
     // Lambda function to compare distances with indices as the keys to sort
     auto lambda_compare = [&](size_t &a, size_t &b) {
@@ -259,18 +264,19 @@ void BuildNeighborList(System &sys) {
 
     // Test if index already exists in the neighbour list of other molecule and
     // if not insert it in neighbour list of molecule i
-    for (size_t j = 0; j < target_num; j++) {
-      auto &k =
-          index[j]; // k: molecule nr of the jth closest molecule to molecule i
-      if (k < i) {  // neighbour list of molecule k has already been created
-        auto &neighbours = sys.molecules[k].neighbours;
-        if (std::find(neighbours.begin(), neighbours.end(), i) ==
+    for (size_t target_idx = 0; target_idx < target_num; target_idx++) {
+      auto &k = index[target_idx]; // k: molecule nr of the jth closest molecule
+                                   // to molecule i
+      if (k <
+          mol_a_idx) { // neighbour list of molecule k has already been created
+        auto &neighbours = sys.molecules.neighbours[k];
+        if (std::find(neighbours.begin(), neighbours.end(), mol_a_idx) ==
             neighbours
                 .end()) // molecule i is not in neighbour list of molecule k
-          sys.molecules[i].neighbours.push_back(
+          sys.molecules.neighbours[mol_a_idx].push_back(
               k); // add molecule k to the neighbour list of molecule i
       } else {
-        sys.molecules[i].neighbours.push_back(
+        sys.molecules.neighbours[mol_a_idx].push_back(
             k); // add molecule k to the neighbour list of molecule i
       }
     }
@@ -279,24 +285,25 @@ void BuildNeighborList(System &sys) {
 
 // Given a bond, updates the force on all atoms correspondingly
 void UpdateBondForces(System &sys) {
-  for (Molecule &molecule : sys.molecules)
-    // Loops over the (2 for water) bond constraints
-    for (Bond &bond : molecule.bonds) {
-      auto &atom1 = molecule.atoms[bond.a1];
-      auto &atom2 = molecule.atoms[bond.a2];
-      Vec3 dp = atom1.p - atom2.p;
-      Vec3 f = -bond.K * (1 - bond.L0 / dp.mag()) * dp;
-      atom1.f += f;
-      atom2.f -= f;
+  for (auto &bond : sys.molecules.bonds) {
+    for (size_t mol_idx = 0; mol_idx < sys.molecules.no_mol; mol_idx++) {
+      Vec3 dp = sys.molecules.atoms[bond.a1].p[mol_idx] -
+                sys.molecules.atoms[bond.a2].p[mol_idx];
+      double dp_mag = dp.mag();
+      Vec3 f = -bond.K * (1 - bond.L0 / dp_mag) * dp;
+      sys.molecules.atoms[bond.a1].f[mol_idx] += f;
+      sys.molecules.atoms[bond.a2].f[mol_idx] -= f;
       accumulated_forces_bond += f.mag();
     }
+  }
 }
 
 // Iterates over all angles in molecules and updates forces on atoms
 // correpondingly
 void UpdateAngleForces(System &sys) {
-  for (Molecule &molecule : sys.molecules)
-    for (Angle &angle : molecule.angles) {
+
+  for (auto &angle : sys.molecules.angles) {
+    for (size_t mol_idx = 0; mol_idx < sys.molecules.no_mol; mol_idx++) {
       //====  angle forces  (H--O---H bonds) U_angle = 0.5*k_a(phi-phi_0)^2
       // f_H1 = K(phi-ph0)/|H1O|*Ta
       // f_H2 = K(phi-ph0)/|H2O|*Tc
@@ -304,37 +311,48 @@ void UpdateAngleForces(System &sys) {
       // Ta = norm(H1O x (H1O x H2O))
       // Tc = norm(H2O x (H2O x H1O))
       //=============================================================
-      auto &atom1 = molecule.atoms[angle.a1];
-      auto &atom2 = molecule.atoms[angle.a2];
-      auto &atom3 = molecule.atoms[angle.a3];
-
-      Vec3 d21 = atom2.p - atom1.p;
-      Vec3 d23 = atom2.p - atom3.p;
+      Vec3 d21 = sys.molecules.atoms[angle.a2].p[mol_idx] -
+                 sys.molecules.atoms[angle.a1].p[mol_idx];
+      Vec3 d23 = sys.molecules.atoms[angle.a2].p[mol_idx] -
+                 sys.molecules.atoms[angle.a3].p[mol_idx];
 
       // phi = d21 dot d23 / |d21| |d23|
       double norm_d21 = d21.mag();
       double norm_d23 = d23.mag();
-      double phi = acos(dot(d21, d23) / (norm_d21 * norm_d23));
 
-      // d21 cross (d21 cross d23)
-      Vec3 c21_23 = cross(d21, d23);
-      Vec3 Ta = cross(d21, c21_23);
-      Ta /= Ta.mag();
+      if (norm_d21 > 1e-10 && norm_d23 > 1e-10) { // Avoid division by zero
+        double cos_phi = dot(d21, d23) / (norm_d21 * norm_d23);
+        // Clamp cos_phi to avoid acos domain errors
+        cos_phi = std::max(-1.0, std::min(1.0, cos_phi));
+        double phi = acos(cos_phi);
 
-      // d23 cross (d23 cross d21) = - d23 cross (d21 cross d23) = c21_23 cross
-      // d23
-      Vec3 Tc = cross(c21_23, d23);
-      Tc /= Tc.mag();
+        // d21 cross (d21 cross d23)
+        Vec3 c21_23 = cross(d21, d23);
+        Vec3 Ta = cross(d21, c21_23);
+        double Ta_mag = Ta.mag();
+        if (Ta_mag > 1e-10) {
+          Ta /= Ta_mag;
+        }
 
-      Vec3 f1 = Ta * (angle.K * (phi - angle.Phi0) / norm_d21);
-      Vec3 f3 = Tc * (angle.K * (phi - angle.Phi0) / norm_d23);
+        // d23 cross (d23 cross d21) = - d23 cross (d21 cross d23) = c21_23
+        // cross d23
+        Vec3 Tc = cross(c21_23, d23);
+        double Tc_mag = Tc.mag();
+        if (Tc_mag > 1e-10) {
+          Tc /= Tc_mag;
+        }
 
-      atom1.f += f1;
-      atom2.f -= f1 + f3;
-      atom3.f += f3;
+        Vec3 f1 = Ta * (angle.K * (phi - angle.Phi0) / norm_d21);
+        Vec3 f3 = Tc * (angle.K * (phi - angle.Phi0) / norm_d23);
 
-      accumulated_forces_angle += f1.mag() + f3.mag();
+        sys.molecules.atoms[angle.a1].f[mol_idx] += f1;
+        sys.molecules.atoms[angle.a2].f[mol_idx] -= f1 + f3;
+        sys.molecules.atoms[angle.a3].f[mol_idx] += f3;
+
+        accumulated_forces_angle += f1.mag() + f3.mag();
+      }
     }
+  }
 }
 
 // Iterates over atoms in different molecules and calculate non-bonded forces
@@ -342,20 +360,17 @@ void UpdateNonBondedForces(System &sys) {
   /* nonbonded forces: only a force between atoms in different molecules
      The total non-bonded forces come from Lennard Jones (LJ) and coulomb
      interactions U = ep[(sigma/r)^12-(sigma/r)^6] + C*q1*q2/r */
-  for (size_t i = 0; i < sys.molecules.size(); i++)
-    for (auto &j : sys.molecules[i]
-                       .neighbours) // iterate over all neighbours of molecule i
-      for (auto &atom1 : sys.molecules[i].atoms)
-        for (auto &atom2 :
-             sys.molecules[j].atoms) { // iterate over all pairs of atoms,
-                                       // similar as well as dissimilar
-          double ep = sqrt(atom1.ep * atom2.ep); // ep = sqrt(ep1*ep2)
-          double sigma2 = pow(0.5 * (atom1.sigma + atom2.sigma),
+  for (size_t mol_a_idx = 0; mol_a_idx < sys.molecules.no_mol; mol_a_idx++) {
+    for (auto &mol_b_idx : sys.molecules.neighbours[mol_a_idx]) {
+      for (auto &atom_type_a : sys.molecules.atoms) {
+        for (auto &atom_type_b : sys.molecules.atoms) {
+          double ep = sqrt(atom_type_a.ep * atom_type_b.ep);
+          double sigma2 = pow(0.5 * (atom_type_a.sigma + atom_type_b.sigma),
                               2); // sigma = (sigma1+sigma2)/2
           double KC = 80 * 0.7;   // Coulomb prefactor
-          double q = KC * atom1.charge * atom2.charge;
+          double q = KC * atom_type_a.charge * atom_type_b.charge;
 
-          Vec3 dp = atom1.p - atom2.p;
+          Vec3 dp = atom_type_a.p[mol_a_idx] - atom_type_b.p[mol_b_idx];
           double r2 = dp.mag2();
           double r = sqrt(r2);
 
@@ -365,26 +380,30 @@ void UpdateNonBondedForces(System &sys) {
           Vec3 f = (ep * (12 * sir3 * sir3 - 6 * sir3) * sir + q / (r * r2)) *
                    dp; // LJ + Coulomb forces
 
-          atom1.f += f;
-          atom2.f -= f; // update both pairs, since the force is equal and
-                        // opposite and pairs only exist in one neigbor list
+          atom_type_a.f[mol_a_idx] += f;
+          atom_type_b.f[mol_b_idx] -=
+              f; // update both pairs, since the force is equal and opposite and
+          // pairs only exist in one neigbor list
           accumulated_forces_non_bond += f.mag();
         }
+      }
+    }
+  }
 }
 
 // integrating the system for one time step using Leapfrog symplectic
 // integration
 void UpdateKDK(System &sys, Sim_Configuration &sc) {
-  for (Molecule &molecule : sys.molecules)
-    for (auto &atom : molecule.atoms) {
-      atom.v += sc.dt / atom.mass * atom.f; // Update the velocities
-      atom.f = {
-          0, 0,
-          0}; // set the forces zero to prepare for next potential calculation
-      atom.p += sc.dt * atom.v; // update position
+  for (auto &atom : sys.molecules.atoms) {
+    for (size_t mol_idx = 0; mol_idx < sys.molecules.no_mol; mol_idx++) {
+      atom.v[mol_idx] +=
+          sc.dt / atom.mass * atom.f[mol_idx]; // Update the velocities
+      atom.f[mol_idx] = {0, 0, 0}; // set the forces zero to prepare for
+                                   // next potential calculation
+      atom.p[mol_idx] += sc.dt * atom.v[mol_idx]; // update position
     }
-
-  sys.time += sc.dt; // update time
+  }
+  sys.time += sc.dt; // update time once per timestep
 }
 
 System MakeWater(size_t N_molecules) {
@@ -400,9 +419,9 @@ System MakeWater(size_t N_molecules) {
   const double angle = 104.45 * deg2rad;
 
   //         mass    ep    sigma charge name
-  Atom Oatom(16, 0.65, 0.31, -0.82, "O");    // Oxygen atom
-  Atom Hatom1(1, 0.18828, 0.238, 0.41, "H"); // Hydrogen atom
-  Atom Hatom2(1, 0.18828, 0.238, 0.41, "H"); // Hydrogen atom
+  Atoms Oatom(16, 0.65, 0.31, -0.82, "O", N_molecules);    // Oxygen atom
+  Atoms Hatom1(1, 0.18828, 0.238, 0.41, "H", N_molecules); // Hydrogen atom
+  Atoms Hatom2(1, 0.18828, 0.238, 0.41, "H", N_molecules); // Hydrogen atom
 
   // bonds beetween first H-O and second H-O respectively
   std::vector<Bond> waterbonds = {{.K = 20000, .L0 = L0, .a1 = 0, .a2 = 1},
@@ -412,7 +431,8 @@ System MakeWater(size_t N_molecules) {
   std::vector<Angle> waterangle = {
       {.K = 1000, .Phi0 = angle, .a1 = 1, .a2 = 0, .a3 = 2}};
 
-  System sys;
+  System sys{.molecules = Molecules(std::vector<Atoms>{Oatom, Hatom1, Hatom2},
+                                    waterbonds, waterangle, N_molecules)};
   // initialize all water molecules on a sphere.
   double phi = acos(-1) * (sqrt(5.) - 1.);
   double radius = sqrt(N_molecules) * 0.15;
@@ -425,11 +445,11 @@ System MakeWater(size_t N_molecules) {
     double z = sin(theta) * r;
 
     Vec3 P0{x * radius, y * radius, z * radius};
-    Oatom.p = {P0.x, P0.y, P0.z};
-    Hatom1.p = {P0.x + L0 * sin(angle / 2), P0.y + L0 * cos(angle / 2), P0.z};
-    Hatom2.p = {P0.x - L0 * sin(angle / 2), P0.y + L0 * cos(angle / 2), P0.z};
-    std::vector<Atom> atoms{Oatom, Hatom1, Hatom2};
-    sys.molecules.push_back({atoms, waterbonds, waterangle});
+    sys.molecules.atoms[0].p[i] = {P0.x, P0.y, P0.z};
+    sys.molecules.atoms[1].p[i] = {P0.x + L0 * sin(angle / 2),
+                                   P0.y + L0 * cos(angle / 2), P0.z};
+    sys.molecules.atoms[2].p[i] = {P0.x - L0 * sin(angle / 2),
+                                   P0.y + L0 * cos(angle / 2), P0.z};
   }
 
   return sys;
@@ -437,12 +457,14 @@ System MakeWater(size_t N_molecules) {
 
 // Write the system configurations in the trajectory file.
 void WriteOutput(System &sys, std::ofstream &file) {
-  // Loop over all atoms in model one molecule at a time and write out position
-  for (Molecule &molecule : sys.molecules)
-    for (auto &atom : molecule.atoms) {
-      file << sys.time << " " << atom.name << " " << atom.p.x << " " << atom.p.y
-           << " " << atom.p.z << '\n';
+  // Loop over all atoms in model one molecule at a time and write out
+  // position
+  for (auto &atom : sys.molecules.atoms) {
+    for (size_t mol_idx = 0; mol_idx < sys.molecules.no_mol; mol_idx++) {
+      file << sys.time << " " << atom.name << " " << atom.p[mol_idx].x << " "
+           << atom.p[mol_idx].y << " " << atom.p[mol_idx].z << '\n';
     }
+  }
 }
 
 //======================================================================================================
@@ -461,8 +483,8 @@ int main(int argc, char *argv[]) {
   WriteOutput(sys,
               file); // writing the initial configuration in the trajectory file
 
-  auto tstart =
-      std::chrono::high_resolution_clock::now(); // start time (nano-seconds)
+  auto tstart = std::chrono::high_resolution_clock::now(); // start time
+                                                           // (nano-seconds)
 
   for (size_t step = 0; step < sc.steps; step++) {
     // BuildNeighborList every 100th step
