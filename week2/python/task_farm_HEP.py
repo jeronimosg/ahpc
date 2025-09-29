@@ -80,7 +80,7 @@ def task_function(setting, ds):
     # accuracy is percentage of events that are predicted as true signal if and only if a true signal
     return np.sum(pred == ds.signal) / ds.nevents
 
-def master(nworker, ds):
+def master(nworker, ds, comm):
     ranges = np.zeros((n_cuts, 8))  # ranges for cuts to explore
 
     # loop over different event channels and set up cuts
@@ -135,7 +135,7 @@ def master(nworker, ds):
     print(f"Elapsed time      :{tend - tstart:>9.4f}")
     print(f"task time [mus]   :{(tend - tstart) * 1e6 / n_settings:>9.4f}")
 
-def worker(rank, ds):
+def worker(rank, ds, comm):
     """
     IMPLEMENT HERE THE CODE FOR THE WORKER
     Use a call to "task_function" to complete a task and return accuracy to master.
@@ -143,16 +143,14 @@ def worker(rank, ds):
     pass
 
 if __name__ == "__main__":
-    #comm = MPI.COMM_WORLD
-    #nrank = comm.Get_size()  # get the total number of ranks
-    #rank = comm.Get_rank()   # get the rank of this process
+    comm = MPI.COMM_WORLD
+    nrank = comm.Get_size()  # get the total number of ranks
+    rank = comm.Get_rank()   # get the rank of this process
 
     # All ranks need to read the data
     ds = Data(filename = "../mc_ggH_16_13TeV_Zee_EGAM1_calocells_16249871.csv")
 
-    master(0, ds)
-
-    #if rank == 0:        # rank 0 is the master
-    #    master(nrank-1, ds)  # there is nrank-1 worker processes
-    #else:                # ranks in [1:nrank] are workers
-    #    worker(rank, ds)
+    if rank == 0:        # rank 0 is the master
+        master(nrank-1, ds, comm)  # there is nrank-1 worker processes
+    else:                # ranks in [1:nrank] are workers
+        worker(rank, ds, comm)
