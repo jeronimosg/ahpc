@@ -82,7 +82,7 @@ contains
         ! Print statistics
         write(*,*) 'Minimum work done by a worker:', minval(workdone)
         write(*,*) 'Maximum work done by a worker:', maxval(workdone)
-        write(*,'(A,F8.2)') ' Average work done by a worker: ', sum(workdone) / nworker
+        write(*,'(A,F8.2)') ' Average work done by a worker: ', real(sum(workdone)) / nworker
         std_dev = sqrt(sum((real(workdone, kind=8) - sum(real(workdone, kind=8)) / nworker)**2) / nworker)
         write(*,'(A,F8.2)') ' Std dev of work done by a worker: ', std_dev
         write(*,'(A,F8.3,A)') ' Expected runtime without overheads:          ', workdone / 1000.0, ' seconds'
