@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-I/home/es.aau.dk/az05mg/openmpi/include]
