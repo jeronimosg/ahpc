@@ -320,37 +320,35 @@ void UpdateAngleForces(System &sys) {
       double norm_d21 = d21.mag();
       double norm_d23 = d23.mag();
 
-      if (norm_d21 > 1e-10 && norm_d23 > 1e-10) { // Avoid division by zero
-        double cos_phi = dot(d21, d23) / (norm_d21 * norm_d23);
-        // Clamp cos_phi to avoid acos domain errors
-        cos_phi = std::max(-1.0, std::min(1.0, cos_phi));
-        double phi = acos(cos_phi);
+      double cos_phi = dot(d21, d23) / (norm_d21 * norm_d23);
+      // Clamp cos_phi to avoid acos domain errors
+      cos_phi = std::max(-1.0, std::min(1.0, cos_phi));
+      double phi = acos(cos_phi);
 
-        // d21 cross (d21 cross d23)
-        Vec3 c21_23 = cross(d21, d23);
-        Vec3 Ta = cross(d21, c21_23);
-        double Ta_mag = Ta.mag();
-        if (Ta_mag > 1e-10) {
-          Ta /= Ta_mag;
-        }
-
-        // d23 cross (d23 cross d21) = - d23 cross (d21 cross d23) = c21_23
-        // cross d23
-        Vec3 Tc = cross(c21_23, d23);
-        double Tc_mag = Tc.mag();
-        if (Tc_mag > 1e-10) {
-          Tc /= Tc_mag;
-        }
-
-        Vec3 f1 = Ta * (angle.K * (phi - angle.Phi0) / norm_d21);
-        Vec3 f3 = Tc * (angle.K * (phi - angle.Phi0) / norm_d23);
-
-        sys.molecules.atoms[angle.a1].f[mol_idx] += f1;
-        sys.molecules.atoms[angle.a2].f[mol_idx] -= f1 + f3;
-        sys.molecules.atoms[angle.a3].f[mol_idx] += f3;
-
-        accumulated_forces_angle += f1.mag() + f3.mag();
+      // d21 cross (d21 cross d23)
+      Vec3 c21_23 = cross(d21, d23);
+      Vec3 Ta = cross(d21, c21_23);
+      double Ta_mag = Ta.mag();
+      if (Ta_mag > 1e-10) {
+        Ta /= Ta_mag;
       }
+
+      // d23 cross (d23 cross d21) = - d23 cross (d21 cross d23) = c21_23
+      // cross d23
+      Vec3 Tc = cross(c21_23, d23);
+      double Tc_mag = Tc.mag();
+      if (Tc_mag > 1e-10) {
+        Tc /= Tc_mag;
+      }
+
+      Vec3 f1 = Ta * (angle.K * (phi - angle.Phi0) / norm_d21);
+      Vec3 f3 = Tc * (angle.K * (phi - angle.Phi0) / norm_d23);
+
+      sys.molecules.atoms[angle.a1].f[mol_idx] += f1;
+      sys.molecules.atoms[angle.a2].f[mol_idx] -= f1 + f3;
+      sys.molecules.atoms[angle.a3].f[mol_idx] += f3;
+
+      accumulated_forces_angle += f1.mag() + f3.mag();
     }
   }
 }
